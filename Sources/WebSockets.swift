@@ -10,7 +10,9 @@ import Foundation
 
 public func websocket(
       _ text: ((WebSocketSession, String) -> Void)?,
-    _ binary: ((WebSocketSession, [UInt8]) -> Void)?) -> ((HttpRequest) -> HttpResponse) {
+      _ binary: ((WebSocketSession, [UInt8]) -> Void)?,
+      _ open: ((WebSocketSession) -> Void)? = nil,
+      _ exit: ((WebSocketSession, Error) -> Void)? = nil) -> ((HttpRequest) -> HttpResponse) {
     return { r in
         guard r.hasTokenForHeader("upgrade", token: "websocket") else {
             return .badRequest(.text("Invalid value of 'Upgrade' header: \(r.headers["upgrade"] ?? "unknown")"))
@@ -60,6 +62,19 @@ public func websocket(
                 }
             }
             
+            func handleOpen(_ session: WebSocketSession) {
+                if let openHandler = open {
+                    openHandler(session)
+                }
+            }
+            
+            func handleExit(_ session: WebSocketSession, error: Error) {
+                if let exitHandler = exit {
+                    exitHandler(session, error)
+                }
+            }
+            
+            
             func handleOperationCode(_ frame: WebSocketSession.Frame) throws {
                 switch frame.opcode {
                 case .continue:
@@ -95,6 +110,7 @@ public func websocket(
             }
             
             do {
+                handleOpen(session)
                 while true {
                     let frame = try session.readFrame()
                     try handleOperationCode(frame)
@@ -102,8 +118,7 @@ public func websocket(
             } catch let error {
                 switch error {
                 case WebSocketSession.Control.close:
-                    // Normal close
-                    break
+                    print("Websocket close")
                 case WebSocketSession.WsError.unknownOpCode:
                     print("Unknown Op Code: \(error)")
                 case WebSocketSession.WsError.unMaskedFrame:
@@ -117,6 +132,7 @@ public func websocket(
                 }
                 // If an error occurs, send the close handshake.
                 session.writeCloseFrame()
+                handleExit(session, error: error)
             }
         }
         guard let secWebSocketAccept = String.toBase64((secWebSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").sha1()) else {
